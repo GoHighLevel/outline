@@ -4,6 +4,11 @@ import type { FindOptions } from "sequelize";
 import { Team, User } from "@server/models";
 import { AuthenticationError, UserSuspendedError } from "../errors";
 import type { Context } from "koa";
+import env from "@server/env";
+import {
+  getGoogleWorkspaceUser,
+  getWorkspaceSessionSource,
+} from "./workspaceAuthentication";
 
 /**
  * Decodes a JWT token and returns its payload without verifying the
@@ -81,6 +86,13 @@ export async function getUserForJWT(
   }
 
   if (payload.type === "transfer") {
+    if (
+      payload.sessionExpiresAt !== undefined &&
+      (!Number.isFinite(new Date(payload.sessionExpiresAt).getTime()) ||
+        new Date(payload.sessionExpiresAt).getTime() <= Date.now())
+    ) {
+      throw AuthenticationError("Expired session");
+    }
     // If the user has made a single API request since the transfer token was
     // created then it's no longer valid, they'll need to sign in again.
     if (
@@ -96,6 +108,45 @@ export async function getUserForJWT(
     JWT.verify(token, user.jwtSecret);
   } catch (_err) {
     throw AuthenticationError("Invalid token");
+  }
+
+  if (payload.workspaceSessionSource !== undefined) {
+    const sourceId = payload.workspaceSessionSource;
+    if (env.isCloudHosted || typeof sourceId !== "string") {
+      throw AuthenticationError("Invalid workspace session");
+    }
+    const sourceToken = await getWorkspaceSessionSource(sourceId);
+    const sourcePayload = getJWTPayload(sourceToken);
+    // A single root login anchors all switches; reject recursive token chains.
+    if (
+      sourcePayload.workspaceSessionSource !== undefined ||
+      sourcePayload.type !== "session"
+    ) {
+      throw AuthenticationError("Invalid workspace session");
+    }
+    const expiresAt = new Date(sourcePayload.expiresAt).getTime();
+    if (
+      !Number.isFinite(expiresAt) ||
+      expiresAt <= Date.now() ||
+      payload.service !== "google"
+    ) {
+      throw AuthenticationError("Expired workspace session");
+    }
+    const source = await getUserForJWT(sourceToken, ["session"]);
+    const membership =
+      source.service === "google"
+        ? await getGoogleWorkspaceUser(source.user, user.teamId)
+        : undefined;
+    if (membership?.id !== user.id) {
+      throw AuthenticationError("Invalid workspace membership");
+    }
+    if (
+      payload.type === "session" &&
+      (!Number.isFinite(new Date(payload.expiresAt).getTime()) ||
+        new Date(payload.expiresAt).getTime() > expiresAt)
+    ) {
+      throw AuthenticationError("Invalid workspace session expiry");
+    }
   }
 
   return {

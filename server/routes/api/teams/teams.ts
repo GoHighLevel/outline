@@ -16,7 +16,12 @@ import type { APIContext } from "@server/types";
 import { AuthenticationType } from "@server/types";
 import { RateLimiterStrategy } from "@server/utils/RateLimiter";
 import { safeEqual } from "@server/utils/crypto";
-import { getUserForJWT } from "@server/utils/jwt";
+import { getJWTPayload, getUserForJWT } from "@server/utils/jwt";
+import {
+  createWorkspaceSessionSource,
+  getGoogleWorkspaceUser,
+  getWorkspaceSessionSource,
+} from "@server/utils/workspaceAuthentication";
 import {
   forgetWorkspaceSession,
   rememberWorkspaceSession,
@@ -198,10 +203,36 @@ router.post(
         const target = await getUserForJWT(targetToken, ["session"]);
         if (target.user.teamId === id && !target.user.isSuspended) {
           hasSession = true;
-          redirectUrl = `${env.URL}/auth/redirect?token=${encodeURIComponent(target.user.getTransferToken(target.service))}`;
+          const payload = getJWTPayload(targetToken);
+          redirectUrl = `${env.URL}/auth/redirect?token=${encodeURIComponent(target.user.getTransferToken(target.service, payload.workspaceSessionSource, payload.expiresAt))}`;
         }
       } catch {
         // Revoked, expired, or otherwise invalid sessions require a fresh login.
+      }
+    }
+
+    if (!hasSession && ctx.state.auth.service === "google") {
+      const sourceId = getJWTPayload(token).workspaceSessionSource;
+      const sourceToken = sourceId
+        ? await getWorkspaceSessionSource(sourceId)
+        : token;
+      const source = await getUserForJWT(sourceToken, ["session"]);
+      const sourcePayload = getJWTPayload(sourceToken);
+      if (
+        source.service === "google" &&
+        Number.isFinite(new Date(sourcePayload.expiresAt).getTime())
+      ) {
+        const target = await getGoogleWorkspaceUser(source.user, id);
+        if (target) {
+          hasSession = true;
+          const sessionSourceId =
+            sourceId ??
+            (await createWorkspaceSessionSource(
+              sourceToken,
+              new Date(sourcePayload.expiresAt)
+            ));
+          redirectUrl = `${env.URL}/auth/redirect?token=${encodeURIComponent(target.getTransferToken("google", sessionSourceId))}`;
+        }
       }
     }
 

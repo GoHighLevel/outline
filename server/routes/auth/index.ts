@@ -4,6 +4,7 @@ import JWT from "jsonwebtoken";
 import Koa from "koa";
 import bodyParser from "koa-body";
 import Router from "koa-router";
+import { getWorkspaceSessionSource } from "@server/utils/workspaceAuthentication";
 import { z } from "zod";
 import env from "@server/env";
 import { AuthenticationError, NotFoundError } from "@server/errors";
@@ -92,8 +93,25 @@ router.get(
       throw AuthenticationError("Cannot extend token");
     }
 
-    const expires = addMonths(new Date(), 3);
-    const jwtToken = user.getSessionToken(expires, service);
+    const expires = payload.workspaceSessionSource
+      ? new Date(
+          getJWTPayload(
+            await getWorkspaceSessionSource(payload.workspaceSessionSource)
+          ).expiresAt
+        )
+      : payload.sessionExpiresAt
+        ? new Date(
+            Math.min(
+              new Date(payload.sessionExpiresAt).getTime(),
+              addMonths(new Date(), 3).getTime()
+            )
+          )
+        : addMonths(new Date(), 3);
+    const jwtToken = user.getSessionToken(
+      expires,
+      service,
+      payload.workspaceSessionSource
+    );
 
     // ensure that the lastActiveAt on user is updated to prevent replay requests
     await user.updateActiveAt(ctx, true);

@@ -28,6 +28,7 @@ import useCurrentUser from "~/hooks/useCurrentUser";
 import {
   useLastVisitedPath,
   usePostLoginPath,
+  setPostLoginPath,
 } from "~/hooks/useLastVisitedPath";
 import useQuery from "~/hooks/useQuery";
 import useStores from "~/hooks/useStores";
@@ -47,6 +48,7 @@ import { SwitchHostButton } from "./components/SwitchHostButton";
 import { navigateToSubdomain } from "./urls";
 import lazyWithRetry from "~/utils/lazyWithRetry";
 import { getRedirectUrl } from "~/utils/urls";
+import { getWorkspaceDocumentPath } from "~/utils/workspaceLinks";
 
 const WorkspaceSetup = lazyWithRetry(
   () => import("./components/WorkspaceSetup")
@@ -64,6 +66,9 @@ function Login({ children, onBack }: Props) {
   const forceOTP = query.get("forceOTP");
   const workspaceId = !isCloudHosted
     ? (query.get("workspace") ?? undefined)
+    : undefined;
+  const documentPath = workspaceId
+    ? getWorkspaceDocumentPath(query.get("document"))
     : undefined;
 
   const { t } = useTranslation();
@@ -120,6 +125,11 @@ function Login({ children, onBack }: Props) {
     !!workspaceId && auth.authenticated && auth.currentTeamId !== workspaceId;
   const requestedWorkspace = React.useRef<string>();
   React.useEffect(() => {
+    if (documentPath) {
+      setPostLoginPath(documentPath);
+    }
+  }, [documentPath]);
+  React.useEffect(() => {
     if (
       switchingWorkspace &&
       !auth.isFetching &&
@@ -157,6 +167,9 @@ function Login({ children, onBack }: Props) {
     !Desktop.isElectron();
 
   if (auth.authenticated && !isPasskeyLogin && !switchingWorkspace) {
+    if (documentPath) {
+      return <Redirect to={documentPath} />;
+    }
     const postLoginPath = spendPostLoginPath();
     if (postLoginPath) {
       return <Redirect to={postLoginPath} />;

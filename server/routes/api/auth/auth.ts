@@ -23,6 +23,8 @@ import type { APIContext } from "@server/types";
 import { AuthenticationType } from "@server/types";
 import { getSessionsInCookie } from "@server/utils/authentication";
 import RateLimiter from "@server/utils/RateLimiter";
+import { getJWTPayload, getUserForJWT } from "@server/utils/jwt";
+import { getWorkspaceSessionSource } from "@server/utils/workspaceAuthentication";
 import {
   forgetWorkspaceSession,
   getSelfHostedTeam,
@@ -150,18 +152,29 @@ router.post("auth.info", auth(), async (ctx: APIContext<T.AuthInfoReq>) => {
   // to SSO sessions - email and passkey logins don't have associated
   // UserAuthentication records that need validation.
   const requiresSSOValidation = !service || !NON_SSO_SERVICES.includes(service);
+  const sourceId =
+    !env.isCloudHosted && type === AuthenticationType.APP
+      ? getJWTPayload(ctx.state.auth.token).workspaceSessionSource
+      : undefined;
+  const ssoUser = sourceId
+    ? (
+        await getUserForJWT(await getWorkspaceSessionSource(sourceId), [
+          "session",
+        ])
+      ).user
+    : user;
   if (
     requiresSSOValidation &&
-    user.lastSignedInAt &&
-    user.lastSignedInAt < subHours(new Date(), 1)
+    ssoUser.lastSignedInAt &&
+    ssoUser.lastSignedInAt < subHours(new Date(), 1)
   ) {
     await new ValidateSSOAccessTask()
       .schedule(
         {
-          userId: user.id,
+          userId: ssoUser.id,
         },
         {
-          jobId: `validate-sso:${user.id}`,
+          jobId: `validate-sso:${ssoUser.id}`,
         }
       )
       .catch(() => {
@@ -204,6 +217,19 @@ router.post(
     const { auth, transaction } = ctx.state;
     const { user, token } = auth;
 
+    if (!env.isCloudHosted && auth.type === AuthenticationType.APP) {
+      const sourceId = getJWTPayload(token).workspaceSessionSource;
+      if (sourceId) {
+        const source = await getUserForJWT(
+          await getWorkspaceSessionSource(sourceId),
+          ["session"]
+        );
+        if (source.user.id !== user.id) {
+          await source.user.rotateJwtSecret({ transaction });
+          forgetWorkspaceSession(ctx, source.user.teamId);
+        }
+      }
+    }
     await user.rotateJwtSecret({ transaction });
     if (!env.isCloudHosted) {
       forgetWorkspaceSession(ctx, user.teamId);

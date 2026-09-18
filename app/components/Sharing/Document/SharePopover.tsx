@@ -21,7 +21,8 @@ import usePrevious from "~/hooks/usePrevious";
 import useShareDataLoader from "~/hooks/useShareDataLoader";
 import useStores from "~/hooks/useStores";
 import type { Permission } from "~/types";
-import { documentPath, urlify } from "~/utils/routeHelpers";
+import { documentPath } from "~/utils/routeHelpers";
+import { workspaceDocumentUrl } from "~/utils/workspaceLinks";
 import { Wrapper, presence } from "../components";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { PermissionAction } from "../components/PermissionAction";
@@ -362,7 +363,7 @@ function SharePopover({
   ) : (
     <CopyLinkButton
       key="copy-link"
-      url={urlify(documentPath(document))}
+      url={workspaceDocumentUrl(team.id, documentPath(document))}
       onCopy={onRequestClose}
     />
   );

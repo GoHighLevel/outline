@@ -623,15 +623,21 @@ class User extends ParanoidModel<
    *
    * @param expiresAt The time the token will expire at
    * @param service The authentication service used to generate the token, if applicable
+   * @param workspaceSessionSource the server-side reference to the original Google login.
    * @returns The session token
    */
-  getSessionToken = (expiresAt?: Date, service?: string) =>
+  getSessionToken = (
+    expiresAt?: Date,
+    service?: string,
+    workspaceSessionSource?: string
+  ) =>
     JWT.sign(
       {
         id: this.id,
         expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
         type: "session",
         service,
+        workspaceSessionSource,
       },
       this.jwtSecret
     );
@@ -657,10 +663,16 @@ class User extends ParanoidModel<
    * between subdomains or domains. It has a short expiry and can only be used
    * once.
    *
-   * @param The authentication service used to generate the token, if applicable
+   * @param service the authentication service used to generate the token, if applicable.
+   * @param workspaceSessionSource the server-side reference to the original Google login.
+   * @param sessionExpiresAt the expiry of the remembered session, when switching workspaces.
    * @returns The transfer token
    */
-  getTransferToken = (service?: string) =>
+  getTransferToken = (
+    service?: string,
+    workspaceSessionSource?: string,
+    sessionExpiresAt?: string
+  ) =>
     JWT.sign(
       {
         id: this.id,
@@ -668,6 +680,8 @@ class User extends ParanoidModel<
         expiresAt: addMinutes(new Date(), 1).toISOString(),
         type: "transfer",
         service,
+        workspaceSessionSource,
+        sessionExpiresAt,
       },
       this.jwtSecret
     );
