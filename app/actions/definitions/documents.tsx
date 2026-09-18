@@ -115,6 +115,7 @@ import lazyWithRetry from "~/utils/lazyWithRetry";
 import env from "~/env";
 import { isMac, isWindows } from "@shared/utils/browser";
 import isCloudHosted from "~/utils/isCloudHosted";
+import { workspaceDocumentUrl } from "~/utils/workspaceLinks";
 import DocumentMove from "~/components/DocumentExplorer/DocumentMove";
 
 const Insights = lazyWithRetry(
@@ -896,7 +897,12 @@ export const copyDocumentLink = createAction({
       ? stores.documents.get(activeDocumentId)
       : undefined;
     if (document) {
-      copy(urlify(documentPath(document)));
+      const teamId = stores.auth.currentTeamId;
+      copy(
+        teamId
+          ? workspaceDocumentUrl(teamId, documentPath(document))
+          : urlify(documentPath(document))
+      );
       toast.success(t("Link copied to clipboard"));
     }
   },
