@@ -62,6 +62,9 @@ function Login({ children, onBack }: Props) {
   const query = useQuery();
   const notice = query.get("notice");
   const forceOTP = query.get("forceOTP");
+  const workspaceId = !isCloudHosted
+    ? (query.get("workspace") ?? undefined)
+    : undefined;
 
   const { t } = useTranslation();
   const user = useCurrentUser({ rejectOnEmpty: false });
@@ -110,8 +113,25 @@ function Login({ children, onBack }: Props) {
   );
 
   React.useEffect(() => {
-    auth.fetchConfig().catch(setError);
-  }, [auth]);
+    auth.fetchConfig(workspaceId).catch(setError);
+  }, [auth, workspaceId]);
+
+  const switchingWorkspace =
+    !!workspaceId && auth.authenticated && auth.currentTeamId !== workspaceId;
+  const requestedWorkspace = React.useRef<string>();
+  React.useEffect(() => {
+    if (
+      switchingWorkspace &&
+      !auth.isFetching &&
+      workspaceId &&
+      requestedWorkspace.current !== workspaceId
+    ) {
+      // React StrictMode replays effects. A workspace transfer must only be
+      // requested once, otherwise the second navigation can replay its token.
+      requestedWorkspace.current = workspaceId;
+      auth.switchTeam(workspaceId).catch(setError);
+    }
+  }, [auth, switchingWorkspace, auth.isFetching, workspaceId]);
 
   React.useEffect(() => {
     const entries = Object.fromEntries(query.entries());
@@ -136,7 +156,7 @@ function Login({ children, onBack }: Props) {
     query.get("client") === Client.Desktop &&
     !Desktop.isElectron();
 
-  if (auth.authenticated && !isPasskeyLogin) {
+  if (auth.authenticated && !isPasskeyLogin && !switchingWorkspace) {
     const postLoginPath = spendPostLoginPath();
     if (postLoginPath) {
       return <Redirect to={postLoginPath} />;
@@ -179,7 +199,7 @@ function Login({ children, onBack }: Props) {
 
   // we're counting on the config request being fast, so just a simple loading
   // indicator here that's delayed by 250ms
-  if (!config) {
+  if (!config || switchingWorkspace) {
     return <LoadingIndicator />;
   }
 

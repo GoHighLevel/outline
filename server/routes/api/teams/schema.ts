@@ -9,6 +9,18 @@ import {
 import { TeamValidation } from "@shared/validations";
 import { BaseSchema } from "@server/routes/api/schema";
 
+export const TeamsCreateSchema = BaseSchema.extend({
+  body: z.object({
+    name: z.string().trim().min(2).max(TeamValidation.maxNameLength),
+  }),
+});
+export type TeamsCreateSchemaReq = z.infer<typeof TeamsCreateSchema>;
+
+export const TeamsSwitchSchema = BaseSchema.extend({
+  body: z.object({ id: z.uuid() }),
+});
+export type TeamsSwitchSchemaReq = z.infer<typeof TeamsSwitchSchema>;
+
 export const TeamsUpdateSchema = BaseSchema.extend({
   body: z.object({
     /** Team name */

@@ -18,6 +18,7 @@ import { signIn } from "@server/utils/authentication";
 import { getTokenFromCookie } from "@server/utils/csrf";
 import { getUserForEmailSigninToken } from "@server/utils/jwt";
 import { getTeamFromContext } from "@server/utils/passport";
+import { getSelfHostedTeam } from "@server/utils/workspaceSessions";
 import * as T from "./schema";
 import { CSRF } from "@shared/constants";
 
@@ -34,7 +35,7 @@ router.post(
 
     let team: Team | null | undefined;
     if (!env.isCloudHosted) {
-      team = await Team.scope("withAuthenticationProviders").findOne();
+      team = await getSelfHostedTeam(ctx);
     } else if (domain.custom) {
       team = await Team.scope("withAuthenticationProviders").findOne({
         where: { domain: domain.host.toLowerCase() },

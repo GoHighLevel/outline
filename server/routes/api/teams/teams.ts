@@ -13,8 +13,15 @@ import { Team, TeamDomain, User } from "@server/models";
 import { authorize } from "@server/policies";
 import { presentTeam, presentPolicies } from "@server/presenters";
 import type { APIContext } from "@server/types";
+import { AuthenticationType } from "@server/types";
 import { RateLimiterStrategy } from "@server/utils/RateLimiter";
 import { safeEqual } from "@server/utils/crypto";
+import { getUserForJWT } from "@server/utils/jwt";
+import {
+  forgetWorkspaceSession,
+  rememberWorkspaceSession,
+  selectWorkspace,
+} from "@server/utils/workspaceSessions";
 import * as T from "./schema";
 
 const router = new Router();
@@ -117,12 +124,13 @@ router.post(
 router.post(
   "teams.create",
   rateLimiter(RateLimiterStrategy.FivePerHour),
-  auth(),
+  auth({ type: AuthenticationType.APP }),
+  validate(T.TeamsCreateSchema),
   transaction(),
-  async (ctx: APIContext) => {
+  async (ctx: APIContext<T.TeamsCreateSchemaReq>) => {
     const { transaction } = ctx.state;
     const { user } = ctx.state.auth;
-    const { name } = ctx.request.body;
+    const { name } = ctx.input.body;
 
     const existingTeam = await Team.scope(
       "withAuthenticationProviders"
@@ -153,6 +161,8 @@ router.post(
       role: UserRole.Admin,
     });
 
+    rememberWorkspaceSession(ctx, user, ctx.state.auth.token);
+
     ctx.body = {
       success: true,
       data: {
@@ -162,6 +172,45 @@ router.post(
         }/auth/redirect?token=${newUser?.getTransferToken()}`,
       },
     };
+  }
+);
+
+router.post(
+  "teams.switch",
+  rateLimiter(RateLimiterStrategy.TwentyFivePerMinute),
+  auth({ type: AuthenticationType.APP }),
+  validate(T.TeamsSwitchSchema),
+  async (ctx: APIContext<T.TeamsSwitchSchemaReq>) => {
+    if (env.isCloudHosted) {
+      throw ValidationError("Use the workspace URL to switch workspaces");
+    }
+    const { id } = ctx.input.body;
+    const { user, token } = ctx.state.auth;
+    await Team.findByPk(id, { rejectOnEmpty: true });
+    rememberWorkspaceSession(ctx, user, token);
+    let redirectUrl = `${env.URL}/?workspace=${id}`;
+    let hasSession = false;
+    const targetToken =
+      id === user.teamId ? token : ctx.cookies.get(`workspaceSession-${id}`);
+
+    if (targetToken) {
+      try {
+        const target = await getUserForJWT(targetToken, ["session"]);
+        if (target.user.teamId === id && !target.user.isSuspended) {
+          hasSession = true;
+          redirectUrl = `${env.URL}/auth/redirect?token=${encodeURIComponent(target.user.getTransferToken(target.service))}`;
+        }
+      } catch {
+        // Revoked, expired, or otherwise invalid sessions require a fresh login.
+      }
+    }
+
+    if (!hasSession) {
+      forgetWorkspaceSession(ctx, id);
+    }
+    selectWorkspace(ctx, id);
+    ctx.cookies.set("accessToken", null, { sameSite: "lax" });
+    ctx.body = { data: { redirectUrl } };
   }
 );
 

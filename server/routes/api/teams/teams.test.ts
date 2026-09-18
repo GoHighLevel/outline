@@ -1,5 +1,6 @@
 import { faker } from "@faker-js/faker";
-import { TeamDomain } from "@server/models";
+import { randomUUID } from "node:crypto";
+import { TeamDomain, User } from "@server/models";
 import {
   buildAdmin,
   buildCollection,
@@ -7,6 +8,7 @@ import {
   buildUser,
 } from "@server/test/factories";
 import { getTestServer, setSelfHosted } from "@server/test/support";
+import { getUserForJWT } from "@server/utils/jwt";
 
 const server = getTestServer();
 
@@ -25,7 +27,7 @@ describe("teams.create", () => {
     expect(body.data.team.name).toEqual(name);
   });
 
-  it.skip("requires a cloud hosted deployment", async () => {
+  it("allows self-hosted admins to create an isolated workspace", async () => {
     setSelfHosted();
 
     const team = await buildTeam();
@@ -35,7 +37,127 @@ describe("teams.create", () => {
         name: faker.company.name(),
       },
     });
-    expect(res.status).toEqual(402);
+    expect(res.status).toEqual(200);
+    const { data } = await res.json();
+    const createdUser = await User.findOne({ where: { teamId: data.team.id } });
+    expect(data.team.id).not.toEqual(team.id);
+    expect(createdUser?.email).toEqual(user.email);
+    expect(createdUser?.isAdmin).toBe(true);
+    expect(res.headers.get("set-cookie")).toContain(
+      `workspaceSession-${team.id}=`
+    );
+  });
+
+  it("denies self-hosted members even when member workspace creation is enabled", async () => {
+    setSelfHosted();
+    const team = await buildTeam({ memberTeamCreate: true });
+    const user = await buildUser({ teamId: team.id });
+    const res = await server.post("/api/teams.create", user, {
+      body: { name: "Engineering" },
+    });
+    expect(res.status).toEqual(403);
+  });
+
+  it.each(["", "  ", "x".repeat(256)])(
+    "rejects an invalid workspace name",
+    async (name) => {
+      const user = await buildAdmin();
+      const res = await server.post("/api/teams.create", user, {
+        body: { name },
+      });
+      expect(res.status).toEqual(400);
+    }
+  );
+});
+
+describe("teams.switch", () => {
+  it("rejects unknown workspaces without changing the current session", async () => {
+    setSelfHosted();
+    const user = await buildAdmin();
+    const res = await server.post("/api/teams.switch", user, {
+      body: { id: randomUUID() },
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("switches using a verified session for the destination workspace", async () => {
+    setSelfHosted();
+    const user = await buildAdmin();
+    const target = await buildUser({ email: user.email });
+    const res = await server.post("/api/teams.switch", user, {
+      body: { id: target.teamId },
+      headers: {
+        Cookie: `workspaceSession-${target.teamId}=${target.getSessionToken()}`,
+      },
+    });
+    expect(res.status).toEqual(200);
+    const { data } = await res.json();
+    const token = new URL(data.redirectUrl).searchParams.get("token");
+    expect(token).toBeTruthy();
+    const result = await getUserForJWT(token ?? "", ["transfer"]);
+    expect(result.user.id).toEqual(target.id);
+    expect(res.headers.get("set-cookie")).toContain(
+      `workspaceSession-${user.teamId}=`
+    );
+  });
+
+  it("requires fresh login when only the email matches", async () => {
+    setSelfHosted();
+    const user = await buildAdmin();
+    const target = await buildUser({ email: user.email });
+    const res = await server.post("/api/teams.switch", user, {
+      body: { id: target.teamId },
+    });
+    expect(res.status).toEqual(200);
+    const { data } = await res.json();
+    expect(data.redirectUrl).toContain(`/?workspace=${target.teamId}`);
+    expect(data.redirectUrl).not.toContain("token=");
+  });
+
+  it.each([
+    "forged",
+    "wrong-team",
+    "transfer",
+    "revoked",
+    "suspended",
+    "expired",
+    "deleted",
+  ])("rejects a %s destination session", async (kind) => {
+    setSelfHosted();
+    const user = await buildAdmin();
+    const target = await buildUser({ email: user.email });
+    let token = target.getSessionToken();
+    if (kind === "forged") {
+      token += "forged";
+    }
+    if (kind === "wrong-team") {
+      token = user.getSessionToken();
+    }
+    if (kind === "transfer") {
+      token = target.getTransferToken();
+    }
+    if (kind === "revoked") {
+      await target.rotateJwtSecret({});
+    }
+    if (kind === "suspended") {
+      await target.team.update({ suspendedAt: new Date() });
+    }
+    if (kind === "expired") {
+      token = target.getSessionToken(new Date(0));
+    }
+    if (kind === "deleted") {
+      await buildAdmin({ teamId: target.teamId });
+      await target.destroy();
+    }
+    const res = await server.post("/api/teams.switch", user, {
+      body: { id: target.teamId },
+      headers: { Cookie: `workspaceSession-${target.teamId}=${token}` },
+    });
+    expect(res.status).toEqual(200);
+    const { data } = await res.json();
+    expect(data.redirectUrl).toContain(`/?workspace=${target.teamId}`);
+    expect(data.redirectUrl).not.toContain("token=");
   });
 });
 

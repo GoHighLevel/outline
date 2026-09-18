@@ -10,6 +10,7 @@ import Logger from "@server/logging/Logger";
 import { Event, Collection, View } from "@server/models";
 import type { APIContext, AuthenticationResult } from "@server/types";
 import { AuthenticationType } from "@server/types";
+import { rememberWorkspaceSession, selectWorkspace } from "./workspaceSessions";
 
 /**
  * Parse and return the details from the "sessions" cookie in the request, if
@@ -147,7 +148,10 @@ export async function signIn(
     const token = encodeURIComponent(user.getTransferToken(service));
     ctx.redirect(`${team.url}/auth/redirect?token=${token}`);
   } else {
-    ctx.cookies.set("accessToken", user.getSessionToken(expires, service), {
+    const token = user.getSessionToken(expires, service);
+    rememberWorkspaceSession(ctx, user, token);
+    selectWorkspace(ctx, team.id);
+    ctx.cookies.set("accessToken", token, {
       sameSite: "lax",
       expires,
     });

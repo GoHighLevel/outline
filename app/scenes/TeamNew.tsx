@@ -10,6 +10,7 @@ import Input from "~/components/Input";
 import Notice from "~/components/Notice";
 import Text from "~/components/Text";
 import useStores from "~/hooks/useStores";
+import isCloudHosted from "~/utils/isCloudHosted";
 
 type Props = {
   user: User;
@@ -46,10 +47,17 @@ function TeamNew({ user }: Props) {
     <>
       <form onSubmit={handleSubmit}>
         <Notice>
-          <Trans>
-            Please note that workspaces are completely separated. They can have
-            a different domain, settings, users, and billing.
-          </Trans>
+          {isCloudHosted ? (
+            <Trans>
+              Please note that workspaces are completely separated. They can
+              have a different domain, settings, users, and billing.
+            </Trans>
+          ) : (
+            <Trans>
+              Each workspace has its own documents, collections, members, and
+              settings.
+            </Trans>
+          )}
         </Notice>
 
         <p />
@@ -77,10 +85,12 @@ function TeamNew({ user }: Props) {
             }}
           />
           .{" "}
-          <Trans>
-            To create a workspace under another email please sign up from the
-            homepage
-          </Trans>
+          {isCloudHosted && (
+            <Trans>
+              To create a workspace under another email please sign up from the
+              homepage
+            </Trans>
+          )}
         </Text>
 
         <Button type="submit" disabled={isSaving || !(name.trim().length > 1)}>

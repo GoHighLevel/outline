@@ -1,22 +1,71 @@
 import passport from "@outlinewiki/koa-passport";
 import { addMonths } from "date-fns";
+import JWT from "jsonwebtoken";
 import Koa from "koa";
 import bodyParser from "koa-body";
 import Router from "koa-router";
-import { AuthenticationError } from "@server/errors";
+import { z } from "zod";
+import env from "@server/env";
+import { AuthenticationError, NotFoundError } from "@server/errors";
 import authMiddleware from "@server/middlewares/authentication";
 import coalesceBody from "@server/middlewares/coaleseBody";
-import { Collection, Team, View } from "@server/models";
+import { Collection, Team, User, View } from "@server/models";
 import AuthenticationHelper from "@server/models/helpers/AuthenticationHelper";
 import type { AppState, AppContext, APIContext } from "@server/types";
 import { AuthenticationType } from "@server/types";
 import { verifyCSRFToken } from "@server/middlewares/csrf";
 import { getJWTPayload } from "@server/utils/jwt";
+import {
+  rememberWorkspaceSession,
+  selectWorkspace,
+} from "@server/utils/workspaceSessions";
 
 const app = new Koa<AppState, AppContext>();
 const router = new Router();
 
 router.use(passport.initialize());
+
+// Reusable local testing credentials are deliberately separate from session
+// tokens, so logging out does not invalidate the developer's login link.
+router.get("/development", async (ctx: APIContext) => {
+  const localHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+  const localAddresses = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+  if (
+    !env.isDevelopment ||
+    !localHosts.has(new URL(env.URL).hostname) ||
+    !localHosts.has(ctx.hostname) ||
+    !localAddresses.has(ctx.req.socket.remoteAddress ?? "")
+  ) {
+    throw NotFoundError();
+  }
+
+  ctx.set("Cache-Control", "no-store");
+  ctx.set("Referrer-Policy", "no-referrer");
+  const token = ctx.query.token;
+  if (typeof token !== "string") {
+    throw AuthenticationError();
+  }
+
+  const claims = (() => {
+    try {
+      return z
+        .object({ type: z.literal("local-admin"), userId: z.uuid() })
+        .parse(JWT.verify(token, env.UTILS_SECRET, { algorithms: ["HS256"] }));
+    } catch {
+      throw AuthenticationError();
+    }
+  })();
+  const user = await User.findByPk(claims.userId, {
+    include: [{ model: Team, as: "team", required: true }],
+  });
+  if (!user?.isAdmin || user.isSuspended) {
+    throw AuthenticationError();
+  }
+
+  ctx.redirect(
+    `${env.URL}/auth/redirect?token=${user.getTransferToken("email")}`
+  );
+});
 
 // dynamically register available authentication provider routes
 void (async () => {
@@ -48,6 +97,9 @@ router.get(
 
     // ensure that the lastActiveAt on user is updated to prevent replay requests
     await user.updateActiveAt(ctx, true);
+
+    rememberWorkspaceSession(ctx, user, jwtToken);
+    selectWorkspace(ctx, user.teamId);
 
     ctx.cookies.set("accessToken", jwtToken, {
       sameSite: "lax",

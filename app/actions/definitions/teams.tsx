@@ -1,4 +1,6 @@
-import { ArrowIcon, PlusIcon } from "outline-icons";
+import copy from "copy-to-clipboard";
+import { ArrowIcon, CopyIcon, PlusIcon } from "outline-icons";
+import { toast } from "sonner";
 import styled from "styled-components";
 import { stringToColor } from "@shared/utils/color";
 import type RootStore from "~/stores/RootStore";
@@ -10,14 +12,15 @@ import {
   createActionWithChildren,
   createExternalLinkAction,
 } from "~/actions";
-import type { ActionContext, ExternalLinkAction } from "~/types";
+import type { ActionContext } from "~/types";
 import Desktop from "~/utils/Desktop";
+import isCloudHosted from "~/utils/isCloudHosted";
 import { dialogActionFactory } from "./common";
 import { TeamSection } from "../sections";
 
 export const switchTeamsList = ({ stores }: { stores: RootStore }) =>
-  stores.auth.availableTeams?.map<ExternalLinkAction>((session) =>
-    createExternalLinkAction({
+  stores.auth.availableTeams?.map((session) => {
+    const definition = {
       id: `switch-${session.id}`,
       name: session.name,
       analyticsName: "Switch workspace",
@@ -37,10 +40,18 @@ export const switchTeamsList = ({ stores }: { stores: RootStore }) =>
       ),
       visible: ({ currentTeamId }: ActionContext) =>
         currentTeamId !== session.id,
-      url: session.url,
-      target: "_self",
-    })
-  ) ?? [];
+    };
+    return isCloudHosted
+      ? createExternalLinkAction({
+          ...definition,
+          url: session.url,
+          target: "_self",
+        })
+      : createAction({
+          ...definition,
+          perform: () => stores.auth.switchTeam(session.id),
+        });
+  }) ?? [];
 
 export const switchTeam = createActionWithChildren({
   name: ({ t }) => t("Switch workspace"),
@@ -75,6 +86,19 @@ export const createTeam = createAction({
   },
 });
 
+export const copyWorkspaceLoginLink = createAction({
+  name: ({ t }) => t("Copy workspace login link"),
+  section: TeamSection,
+  icon: <CopyIcon />,
+  visible: ({ currentTeamId }) => !isCloudHosted && !!currentTeamId,
+  perform: ({ currentTeamId, t }) => {
+    if (currentTeamId) {
+      copy(`${window.location.origin}/?workspace=${currentTeamId}`);
+      toast.success(t("Link copied to clipboard"));
+    }
+  },
+});
+
 export const desktopLoginTeam = dialogActionFactory({
   analyticsName: "Login to workspace",
   section: TeamSection,
@@ -92,4 +116,9 @@ const StyledTeamLogo = styled(TeamLogo)`
   border: 0;
 `;
 
-export const rootTeamActions = [switchTeam, createTeam, desktopLoginTeam];
+export const rootTeamActions = [
+  switchTeam,
+  createTeam,
+  copyWorkspaceLoginLink,
+  desktopLoginTeam,
+];

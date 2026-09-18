@@ -21,6 +21,7 @@ import { hash, safeEqual } from "./crypto";
 import fetch from "./fetch";
 import { getUserForJWT } from "./jwt";
 import { parseUserInfoResponse } from "./oauth";
+import { getSelfHostedTeam } from "./workspaceSessions";
 import {
   hashOAuthStateNonce,
   signOAuthIntent,
@@ -175,6 +176,9 @@ export class StateStore {
       getAuthenticatedUserSessionHash(context);
     const state = signOAuthState({
       host,
+      workspaceId: !env.isCloudHosted
+        ? context.cookies.get("workspaceId")
+        : undefined,
       actorId,
       actorSessionHash,
       client,
@@ -359,12 +363,14 @@ export async function getTeamFromContext(
 
   let team;
   if (!env.isCloudHosted) {
-    if (env.ENVIRONMENT === "test") {
+    if (
+      env.ENVIRONMENT === "test" &&
+      !state?.workspaceId &&
+      !context.cookies.get("workspaceId")
+    ) {
       team = await Team.findByDomain(env.URL);
     } else {
-      team = await Team.findOne({
-        order: [["createdAt", "DESC"]],
-      });
+      team = await getSelfHostedTeam(context, state?.workspaceId);
     }
   } else if (context.state?.rootShare) {
     team = await Team.findByPk(context.state.rootShare.teamId);

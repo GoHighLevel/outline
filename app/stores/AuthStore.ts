@@ -195,8 +195,8 @@ export default class AuthStore extends Store<Team> {
     };
   }
 
-  fetchConfig = async () => {
-    const res = await client.post("/auth.config");
+  fetchConfig = async (workspaceId?: string) => {
+    const res = await client.post("/auth.config", { workspaceId });
     invariant(res?.data, "Config not available");
     runInAction(() => {
       this.config = res.data;
@@ -322,10 +322,26 @@ export default class AuthStore extends Store<Team> {
       const res = await client.post(`/teams.create`, params);
       invariant(res?.success, "Unable to create team");
 
+      if (!isCloudHosted) {
+        await this.logout({ revokeToken: false, savePath: false });
+      }
+
       window.location.href = res.data.transferUrl;
     } finally {
       this.isSaving = false;
     }
+  };
+
+  /**
+   * Switches to a self-hosted workspace and clears the previous workspace's cache.
+   *
+   * @param id the destination workspace ID.
+   */
+  switchTeam = async (id: string) => {
+    const res = await client.post("/teams.switch", { id });
+    invariant(res?.data?.redirectUrl, "Unable to switch workspace");
+    await this.logout({ revokeToken: false, savePath: false });
+    window.location.href = res.data.redirectUrl;
   };
 
   /**

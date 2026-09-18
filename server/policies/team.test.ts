@@ -30,7 +30,7 @@ describe("policies/team", () => {
     });
     const abilities = serialize(admin, team);
     expect(abilities.read).toBeTruthy();
-    expect(abilities.createTeam).toEqual(false);
+    expect(abilities.createTeam).toEqual(true);
     expect(abilities.createAttachment).toBeTruthy();
     expect(abilities.createCollection).toBeTruthy();
     expect(abilities.createTemplate).toBeTruthy();

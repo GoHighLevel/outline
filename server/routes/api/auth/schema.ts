@@ -1,7 +1,9 @@
-import type { z } from "zod";
+import { z } from "zod";
 import { BaseSchema } from "../schema";
 
-export const AuthConfigSchema = BaseSchema;
+export const AuthConfigSchema = BaseSchema.extend({
+  body: z.object({ workspaceId: z.uuid().optional() }),
+});
 
 export type AuthConfigReq = z.infer<typeof AuthConfigSchema>;
 

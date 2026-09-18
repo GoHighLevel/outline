@@ -11,6 +11,7 @@ const StateType = "oauth_state";
 
 interface OAuthIntentInput {
   host: string;
+  workspaceId?: string;
   actorId?: string;
   actorSessionHash?: string;
   client: Client;
@@ -144,6 +145,7 @@ function isOAuthIntent(payload: JWT.JwtPayload): payload is OAuthIntent {
     typeof payload.host === "string" &&
     isClient(payload.client) &&
     isOptionalString(payload.actorId) &&
+    isOptionalString(payload.workspaceId) &&
     isOptionalString(payload.actorSessionHash) &&
     payload.nonceHash === undefined &&
     payload.codeVerifier === undefined &&
@@ -158,6 +160,7 @@ function isOAuthState(payload: JWT.JwtPayload): payload is OAuthState {
     typeof payload.host === "string" &&
     isClient(payload.client) &&
     isOptionalString(payload.actorId) &&
+    isOptionalString(payload.workspaceId) &&
     isOptionalString(payload.actorSessionHash) &&
     typeof payload.iat === "number" &&
     typeof payload.exp === "number" &&

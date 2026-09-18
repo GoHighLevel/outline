@@ -7,6 +7,7 @@ import {
 } from "~/actions/definitions/navigation";
 import {
   createTeam,
+  copyWorkspaceLoginLink,
   switchTeamsList,
   desktopLoginTeam,
 } from "~/actions/definitions/teams";
@@ -29,6 +30,7 @@ const TeamMenu: React.FC<Props> = ({ children }: Props) => {
     () => [
       ...switchTeamsList(context),
       createTeam,
+      copyWorkspaceLoginLink,
       desktopLoginTeam,
       ActionSeparator,
       navigateToWorkspaceSettings,

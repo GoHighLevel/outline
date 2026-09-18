@@ -6,6 +6,7 @@ import { parseDomain } from "@shared/utils/domains";
 import env from "@server/env";
 import auth from "@server/middlewares/authentication";
 import { transaction } from "@server/middlewares/transaction";
+import validate from "@server/middlewares/validate";
 import { Event, Team } from "@server/models";
 import AuthenticationHelper from "@server/models/helpers/AuthenticationHelper";
 import {
@@ -22,99 +23,106 @@ import type { APIContext } from "@server/types";
 import { AuthenticationType } from "@server/types";
 import { getSessionsInCookie } from "@server/utils/authentication";
 import RateLimiter from "@server/utils/RateLimiter";
-import type * as T from "./schema";
+import {
+  forgetWorkspaceSession,
+  getSelfHostedTeam,
+  selectWorkspace,
+} from "@server/utils/workspaceSessions";
+import * as T from "./schema";
 
 const router = new Router();
 
-router.post("auth.config", async (ctx: APIContext<T.AuthConfigReq>) => {
-  // If self hosted AND there is only one team then that team becomes the
-  // brand for the knowledge base and it's guest signin option is used for the
-  // root login page.
-  if (!env.isCloudHosted) {
-    const team = await Team.scope("withAuthenticationProviders").findOne({
-      order: [["createdAt", "DESC"]],
-    });
+router.post(
+  "auth.config",
+  validate(T.AuthConfigSchema),
+  async (ctx: APIContext<T.AuthConfigReq>) => {
+    // Self-hosted workspaces share an origin; the selected workspace supplies
+    // branding and authentication settings for the login page.
+    if (!env.isCloudHosted) {
+      const team = await getSelfHostedTeam(ctx, ctx.input.body.workspaceId);
 
-    if (team) {
-      ctx.body = {
-        data: {
-          name: team.name,
-          customTheme: team.getPreference(TeamPreference.CustomTheme),
-          logo: team.getPreference(TeamPreference.PublicBranding)
-            ? team.avatarUrl
-            : undefined,
-          providers: (await AuthenticationHelper.providersForTeam(team)).map(
-            presentProviderConfig
-          ),
-        },
-      };
-      return;
+      if (team) {
+        selectWorkspace(ctx, team.id);
+        ctx.body = {
+          data: {
+            name: team.name,
+            customTheme: team.getPreference(TeamPreference.CustomTheme),
+            logo: team.getPreference(TeamPreference.PublicBranding)
+              ? team.avatarUrl
+              : undefined,
+            providers: (await AuthenticationHelper.providersForTeam(team)).map(
+              presentProviderConfig
+            ),
+          },
+        };
+        return;
+      }
     }
-  }
 
-  const domain = parseDomain(ctx.request.hostname);
+    const domain = parseDomain(ctx.request.hostname);
 
-  if (domain.custom) {
-    const team = await Team.scope("withAuthenticationProviders").findOne({
-      where: {
-        domain: ctx.request.hostname.toLowerCase(),
+    if (domain.custom) {
+      const team = await Team.scope("withAuthenticationProviders").findOne({
+        where: {
+          domain: ctx.request.hostname.toLowerCase(),
+        },
+      });
+
+      if (team) {
+        ctx.body = {
+          data: {
+            name: team.name,
+            customTheme: team.getPreference(TeamPreference.CustomTheme),
+            logo: team.getPreference(TeamPreference.PublicBranding)
+              ? team.avatarUrl
+              : undefined,
+            hostname: ctx.request.hostname,
+            providers: (await AuthenticationHelper.providersForTeam(team)).map(
+              presentProviderConfig
+            ),
+          },
+        };
+        return;
+      }
+    }
+
+    // If subdomain signin page then we return minimal team details to allow
+    // for a custom screen showing only relevant signin options for that team.
+    else if (env.isCloudHosted && domain.teamSubdomain) {
+      const team = await Team.scope("withAuthenticationProviders").findOne({
+        where: {
+          subdomain: domain.teamSubdomain,
+        },
+      });
+
+      if (team) {
+        ctx.body = {
+          data: {
+            name: team.name,
+            customTheme: team.getPreference(TeamPreference.CustomTheme),
+            logo: team.getPreference(TeamPreference.PublicBranding)
+              ? team.avatarUrl
+              : undefined,
+            hostname: ctx.request.hostname,
+            providers: (await AuthenticationHelper.providersForTeam(team)).map(
+              presentProviderConfig
+            ),
+          },
+        };
+        return;
+      }
+    }
+
+    // Otherwise, we're requesting from the standard root signin page
+    ctx.body = {
+      data: {
+        providers: (await AuthenticationHelper.providersForTeam()).map(
+          presentProviderConfig
+        ),
       },
-    });
-
-    if (team) {
-      ctx.body = {
-        data: {
-          name: team.name,
-          customTheme: team.getPreference(TeamPreference.CustomTheme),
-          logo: team.getPreference(TeamPreference.PublicBranding)
-            ? team.avatarUrl
-            : undefined,
-          hostname: ctx.request.hostname,
-          providers: (await AuthenticationHelper.providersForTeam(team)).map(
-            presentProviderConfig
-          ),
-        },
-      };
-      return;
-    }
+    };
   }
-
-  // If subdomain signin page then we return minimal team details to allow
-  // for a custom screen showing only relevant signin options for that team.
-  else if (env.isCloudHosted && domain.teamSubdomain) {
-    const team = await Team.scope("withAuthenticationProviders").findOne({
-      where: {
-        subdomain: domain.teamSubdomain,
-      },
-    });
-
-    if (team) {
-      ctx.body = {
-        data: {
-          name: team.name,
-          customTheme: team.getPreference(TeamPreference.CustomTheme),
-          logo: team.getPreference(TeamPreference.PublicBranding)
-            ? team.avatarUrl
-            : undefined,
-          hostname: ctx.request.hostname,
-          providers: (await AuthenticationHelper.providersForTeam(team)).map(
-            presentProviderConfig
-          ),
-        },
-      };
-      return;
-    }
-  }
-
-  // Otherwise, we're requesting from the standard root signin page
-  ctx.body = {
-    data: {
-      providers: (await AuthenticationHelper.providersForTeam()).map(
-        presentProviderConfig
-      ),
-    },
-  };
-});
+);
 
 /** Authentication services that don't require SSO validation. */
 const NON_SSO_SERVICES = ["email", "passkeys"];
@@ -122,7 +130,7 @@ const NON_SSO_SERVICES = ["email", "passkeys"];
 router.post("auth.info", auth(), async (ctx: APIContext<T.AuthInfoReq>) => {
   const { user, service, type } = ctx.state.auth;
   const sessions = getSessionsInCookie(ctx);
-  const signedInTeamIds = Object.keys(sessions);
+  const signedInTeamIds = env.isCloudHosted ? Object.keys(sessions) : [];
 
   const [team, groups, signedInTeams, availableTeams] = await Promise.all([
     Team.scope("withDomains").findByPk(user.teamId, {
@@ -179,7 +187,7 @@ router.post("auth.info", auth(), async (ctx: APIContext<T.AuthInfoReq>) => {
         (availableTeam) =>
           presentAvailableTeam(
             availableTeam,
-            signedInTeamIds.includes(team.id) ||
+            signedInTeamIds.includes(availableTeam.id) ||
               availableTeam.id === user.teamId
           )
       ),
@@ -197,6 +205,9 @@ router.post(
     const { user, token } = auth;
 
     await user.rotateJwtSecret({ transaction });
+    if (!env.isCloudHosted) {
+      forgetWorkspaceSession(ctx, user.teamId);
+    }
     await Event.createFromContext(ctx, {
       name: "users.signout",
       userId: user.id,
